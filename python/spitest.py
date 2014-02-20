@@ -30,8 +30,17 @@ AD_VALUE_MASK  = 0x0FFF
 AD_VALID       = 0x10
 AD_ADDRESS     = 0xE0
 CFG_STAT_RSTC  = 0x0010
+DAC_OFFSET     = 0x09
 RESET_PIN      = 22
 
+#
+# A local exception class for handling ADC/DAC errors
+#
+class piadacException(Exception):
+	def __init__ (self, value):
+		self.value = value
+	def __str__ (self):
+		return repr(self.value)
 #
 # Write a command to the ADC
 #
@@ -77,6 +86,9 @@ def soft_reset ( ):
 # read ADC Value
 #
 def read_adc ( channel ):
+	if channel > 7:
+		raise piadacException("ADC Channel out of range (0-7) was: " + str(channel))
+
 	cmd = CMD_READ + CMD_PG_DATA + (channel << 6)
 	cmd1 = (cmd >> 8) & 0xff
 	cmd2 = cmd & 0xff
@@ -90,6 +102,28 @@ def read_adc ( channel ):
 	adcvalue = ((adcdata[2] << 8) | adcdata[3]) & AD_VALUE_MASK
 	return adcvalue
 	
+#
+# Write new value to DAC
+#
+#   Channel can be 0-2 (3 channel)
+#   Value can be 0 - 4095 (12 bits)
+#
+def write_dac ( channel, value ):
+	if channel > 2:
+		raise piadacException("DAC Channel out of range (0-2) was: " + str(channel))
+	if value > 4095:
+		raise piadacException("DAC Value out of range (0-4095) was: " + str(value))
+
+        # Create command bytes
+        cmd = CMD_WRITE + CMD_PG_DATA | ((channel + DAC_OFFSET) << 6)
+        cmd1 = (cmd >> 8) & 0xff
+        cmd2 = cmd & 0xff
+        # Create data bytes
+        dat1 = (value >> 8) & 0xff
+        dat2 = value & 0xff
+        # Write the command
+        spi.xfer2([cmd1, cmd2, dat1, dat2])
+
 # Reset ADC
 try:
 	gpio.setmode (gpio.BOARD)
@@ -109,15 +143,18 @@ try:
 	# Perform a soft reset of the ADC
 	soft_reset()
 
-	i = 2
+	write_dac(0, 4000)
 	while True:
-		print "(%d: %d), " % (i, read_adc(i))
+		for i in [0, 2, 3, 4, 5]:
+			print "(%d: %d), " % (i, read_adc(i))
 		time.sleep(1)
 
 	print "Closing SPI"
 	spi.close()
 	gpio.cleanup()
-except:
+
+except piadacException as e:
+	print "I'm so sorry, the application raised the following exception: ", e.value
 	spi.close()
 	gpio.cleanup()
 
